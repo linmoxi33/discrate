@@ -26,6 +26,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "examples"))
 
+# Windows 控制台默认不是 UTF-8，本脚本通篇中文，先把自己修好再说话。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 import mediafile  # noqa: E402
 from make_sample import build as build_sample  # noqa: E402
 
