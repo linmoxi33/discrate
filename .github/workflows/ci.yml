@@ -38,7 +38,8 @@ jobs:
         run: ruff check src tests tools examples
 
       - name: Compile check
-        run: python -m compileall -q -W error::SyntaxWarning src tools examples
+        # -W 是解释器参数，必须放在 -m 之前；放到 compileall 后面会被它自己解析。
+        run: python -W error::SyntaxWarning -m compileall -q src tools examples
 
       - name: Tests
         run: pytest -q
