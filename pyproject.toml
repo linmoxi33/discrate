@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "discrate"
+version = "0.1.0"
+description = "把一堆命名混乱的音乐文件整理成整齐、可回滚的音乐库"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "linmoxi33" }]
+keywords = ["music", "library", "tags", "organizer", "beets"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Sound/Audio",
+]
+dependencies = [
+    "beets>=2.0,<3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-cov>=5"]
+
+[project.scripts]
+discrate = "discrate.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "RUF", "PERF"]
+ignore = [
+    "E501",
+    # 中文文案里的全角标点是刻意的，不是「长得像 ASCII 的混淆字符」。
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    # 两三个元素的循环里 try/except 的开销可以忽略。
+    "PERF203",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error::pytest.PytestUnhandledThreadExceptionWarning"]
