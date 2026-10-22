@@ -208,8 +208,8 @@ discrate ~/音乐 --profile library
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"
-pytest                      # 151 个用例
-python tools/mutate.py      # 14 个定向变异体，验证断言有效性
+pytest                      # 157 个用例
+python tools/mutate.py      # 15 个定向变异体，验证断言有效性
 python examples/make_sample.py --out 样本   # 生成真实感的用户文件夹
 python tools/user_check.py  # 模拟零知识用户跑完整流程
 ```

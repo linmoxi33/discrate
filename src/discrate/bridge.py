@@ -16,9 +16,12 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-# 组件长度上限。Windows 单段上限 255 字符，但过长的名字在播放器、
-# 同步工具、U 盘之间迁移时容易出问题，默认取一个保守值。
+# 组件长度上限。
+# Windows 单段上限是 255 个 UTF-16 字符，Linux/macOS 是 255 个**字节**。
+# 一个中文字符 UTF-8 占 3 字节，所以「120 字符」在 Linux 上可能是 360 字节，
+# 直接 ENAMETOOLONG。两个上限都要守，取更严格的那个。
 MAX_COMPONENT = 120
+MAX_COMPONENT_BYTES = 200
 
 # Windows 保留设备名。beets 的 sanitize_path 不处理这些，
 # 而它们会直接导致创建文件失败（`CON.mp3` 永远建不出来）。
@@ -54,6 +57,7 @@ from beets.util import sanitize_path  # noqa: E402
 __all__ = [
     "BEETSDIR",
     "MAX_COMPONENT",
+    "MAX_COMPONENT_BYTES",
     "RawTags",
     "ReadError",
     "read_tags",
@@ -138,14 +142,27 @@ def read_tags(path: Path | str) -> tuple[RawTags | None, str | None]:
     )
 
 
-def safe_component(text: str, max_len: int = MAX_COMPONENT) -> str:
+def _truncate_utf8(text: str, max_bytes: int) -> str:
+    """按 UTF-8 字节数截断，不切断半个字符。"""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[:max_bytes].decode("utf-8", "ignore")
+
+
+def safe_component(
+    text: str,
+    max_len: int = MAX_COMPONENT,
+    max_bytes: int = MAX_COMPONENT_BYTES,
+) -> str:
     """把任意字符串变成可安全落盘的单段文件名。
 
     在 beets 的 ``sanitize_path`` 之上补三件上游不做的事：
 
     * Windows 保留设备名（``CON`` / ``NUL`` / ``COM1`` …）会导致建文件失败；
     * 尾部空格与点在 Windows 上会被静默丢弃，造成实际路径与记录不一致；
-    * 组件长度截断，避免迁移到 U 盘/网盘时超限。
+    * 组件长度截断 —— **字符数与字节数都要守**，否则中文标题在 Linux 上
+      会以 ENAMETOOLONG 直接失败（实测：115 个汉字 = 345 字节 > 255）。
 
     注意 ``sanitize_path`` 是给**路径片段**用的：它先按分隔符把字符串拆成
     多段再拼回去，所以 ``sanitize_path("AC/DC")`` 得到的是 ``AC\\DC``
@@ -168,6 +185,7 @@ def safe_component(text: str, max_len: int = MAX_COMPONENT) -> str:
         cleaned = "_" + cleaned
     if len(cleaned) > max_len:
         cleaned = cleaned[:max_len].rstrip(". ")
+    cleaned = _truncate_utf8(cleaned, max_bytes).rstrip(". ")
     return cleaned or "_"
 
 

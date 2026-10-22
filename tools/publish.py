@@ -40,6 +40,7 @@ EXCLUDE_DIRS = {
     "dist",
     "_run",
     "样本",
+    ".mutation-snapshot",
 }
 EXCLUDE_SUFFIX = {".pyc", ".pyo"}
 

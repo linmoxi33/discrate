@@ -109,9 +109,24 @@ class TestSafeComponent:
     def test_leading_space_stripped(self):
         assert safe_component("   name") == "name"
 
-    def test_length_truncated(self):
-        out = safe_component("长" * 300, max_len=120)
+    def test_ascii_length_truncated(self):
+        out = safe_component("a" * 300, max_len=120)
         assert len(out) == 120
+
+    def test_chinese_char_limit(self):
+        out = safe_component("长" * 300, max_len=120)
+        assert len(out) <= 120
+
+    def test_chinese_byte_limit(self):
+        """115 个汉字 = 345 字节 > Linux 单段 255 字节上限，必须按字节再截一次。"""
+        out = safe_component("长" * 115)
+        assert len(out.encode("utf-8")) <= 200
+        assert len(out) > 0
+
+    def test_chinese_byte_limit_no_half_char(self):
+        """按字节截断不能切出半个 UTF-8 字符。"""
+        out = safe_component("长" * 115)
+        assert out.encode("utf-8").decode("utf-8") == out
 
     def test_empty_becomes_underscore(self):
         assert safe_component("") == "_"
