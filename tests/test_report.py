@@ -108,3 +108,114 @@ class TestJson:
         payload = to_json(plan, result)
         assert payload["applied"]["done"] == len(result.done)
         assert payload["applied"]["failed"] == []
+
+
+class TestTree:
+    def test_nested(self, sample_dir):
+        from discrate.report import _tree
+
+        plan = plan_for(sample_dir)
+        lines = _tree(
+            [d.target for d in plan.writes if d.target], plan.target_root, width=200
+        )
+        text = "\n".join(lines)
+        assert "周杰伦/" in text
+        assert "叶惠美/" in text
+        assert "cover" not in text
+
+    def test_max_items(self, tmp_path):
+        from discrate.report import _tree
+
+        base = tmp_path / "out"
+        targets = [base / "A" / f"{i}.mp3" for i in range(10)]
+        lines = _tree(targets, base, width=200, max_items=3)
+        assert any("还有 7 项" in line for line in lines)
+
+    def test_max_depth(self, tmp_path):
+        from discrate.report import _tree
+
+        base = tmp_path / "out"
+        lines = _tree([base / "a" / "b" / "c" / "d" / "e.mp3"], base, width=200, max_depth=2)
+        assert not any("e.mp3" in line for line in lines)
+
+    def test_empty(self, tmp_path):
+        from discrate.report import _tree
+
+        assert _tree([], tmp_path) == []
+
+    def test_lines_truncated(self, tmp_path):
+        from discrate.report import _tree, display_width
+
+        base = tmp_path / "out"
+        long_name = "很长的名字" * 40
+        lines = _tree([base / "A" / f"{long_name}.mp3"], base, width=40)
+        for line in lines:
+            assert display_width(line) <= 40
+
+
+class TestWriteReport:
+    def test_files_created(self, sample_dir):
+        from discrate.execute import apply_plan
+        from discrate.report import write_report
+
+        plan = plan_for(sample_dir)
+        result = apply_plan(plan)
+        md, js = write_report(plan, result)
+        assert md.exists() and md.name == "整理报告.md"
+        assert js.exists() and js.name == "整理报告.json"
+
+    def test_markdown_sections(self, sample_dir):
+        from discrate.execute import apply_plan
+        from discrate.report import write_report
+
+        plan = plan_for(sample_dir)
+        result = apply_plan(plan)
+        md, _ = write_report(plan, result)
+        text = md.read_text(encoding="utf-8")
+        for heading in ("# 整理报告", "## 整理后的结构", "## 明细", "## 如何撤回"):
+            assert heading in text
+        assert "discrate undo" in text
+
+    def test_markdown_lists_problems(self, sample_dir):
+        from discrate.execute import apply_plan
+        from discrate.report import write_report
+
+        plan = plan_for(sample_dir)
+        result = apply_plan(plan)
+        md, _ = write_report(plan, result)
+        text = md.read_text(encoding="utf-8")
+        assert "## 判定为重复（未复制）" in text
+        assert "## 无法整理" in text
+
+    def test_pipe_escaped(self, sample_dir):
+        from discrate.execute import apply_plan
+        from discrate.report import write_report
+
+        plan = plan_for(sample_dir)
+        result = apply_plan(plan)
+        md, _ = write_report(plan, result)
+        for line in md.read_text(encoding="utf-8").splitlines():
+            if line.startswith("| ") and line.count("|") > 6:
+                # 每行明细固定 6 个竖线（5 列），多的说明没转义
+                assert line.count("|") == 6
+
+    def test_json_valid(self, sample_dir):
+        import json as _json
+
+        from discrate.execute import apply_plan
+        from discrate.report import write_report
+
+        plan = plan_for(sample_dir)
+        result = apply_plan(plan)
+        _, js = write_report(plan, result)
+        payload = _json.loads(js.read_text(encoding="utf-8"))
+        assert payload["applied"]["done"] > 0
+
+    def test_report_path_in_result_text(self, sample_dir):
+        from discrate.execute import apply_plan
+        from discrate.report import render_result, write_report
+
+        plan = plan_for(sample_dir)
+        result = apply_plan(plan)
+        md, _ = write_report(plan, result)
+        assert "整理报告" in render_result(plan, result, report_path=md)

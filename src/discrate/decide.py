@@ -10,9 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .lookup import LookupHit
 from .naming import TemplateError, build_target, render_segments
 from .profile import Profile
-from .scan import ScanResult, Track
+from .scan import ScanResult, Track, pick_cover
 
 __all__ = [
     "UNKNOWN_ARTIST",
@@ -42,6 +43,8 @@ class Decision:
     confidence: str = "high"  # high | medium | low
     reasons: list[Reason] = field(default_factory=list)
     filled: dict[str, object] = field(default_factory=dict)
+    #: 在线元数据建议（只在 --lookup 时非空）。仅用于展示，绝不自动写盘。
+    suggestions: list[LookupHit] = field(default_factory=list)
 
     @property
     def writes(self) -> bool:
@@ -62,6 +65,8 @@ class Plan:
     target_root: Path
     profile: Profile
     decisions: list[Decision]
+    #: 目标专辑目录 → 要复制过去的封面源文件
+    covers: dict[Path, Path] = field(default_factory=dict)
 
     def by_action(self, action: str) -> list[Decision]:
         return [d for d in self.decisions if d.action == action]
@@ -138,6 +143,7 @@ def build_plan(
     target_root: Path | None = None,
     previous: dict[str, dict] | None = None,
     dedupe: bool = True,
+    suggestions: dict[str, list[LookupHit]] | None = None,
 ) -> Plan:
     """生成整理方案。纯计算，不触碰文件系统（除读取已有目标判断冲突）。
 
@@ -370,7 +376,51 @@ def build_plan(
 
     # 输出顺序回到用户的直觉：按源路径排序，而不是按体积。
     decisions.sort(key=lambda d: str(d.track.rel).casefold())
-    return Plan(root=root, target_root=target, profile=profile, decisions=decisions)
+
+    # 在线建议统一注入：只在展示层出现，不参与任何落盘决策。
+    if suggestions:
+        for decision in decisions:
+            decision.suggestions = suggestions.get(str(decision.track.rel), [])
+
+    # 每个专辑目录带一张封面。单曲路径（单曲/歌手/）里可能混着多张专辑的歌，
+    # 塞一张封面进去反而是误导，所以只处理有专辑的那一类。
+    #
+    # 还有一个更隐蔽的陷阱：源目录里的 cover.jpg 只属于「这个目录就是一张专辑」
+    # 的情况。如果同一目录下的歌被分发到了多个不同专辑（典型是根目录或
+    # 「下载」这种杂项目录），那张图归属不明，贴到哪张专辑上都是瞎猜。
+    dir_to_albums: dict[Path, set[Path]] = {}
+    for decision in decisions:
+        if decision.action not in WRITE_ACTIONS or decision.target is None:
+            continue
+        if not decision.track.has_album:
+            continue
+        dir_to_albums.setdefault(decision.track.path.parent, set()).add(
+            decision.target.parent
+        )
+
+    covers: dict[Path, Path] = {}
+    for decision in decisions:
+        if decision.action not in WRITE_ACTIONS or decision.target is None:
+            continue
+        if not decision.track.has_album:
+            continue
+        source_dir = decision.track.path.parent
+        if len(dir_to_albums.get(source_dir, ())) != 1:
+            continue
+        album_dir = decision.target.parent
+        if album_dir in covers:
+            continue
+        chosen = pick_cover(scan.images.get(source_dir, []))
+        if chosen is not None:
+            covers[album_dir] = chosen
+
+    return Plan(
+        root=root,
+        target_root=target,
+        profile=profile,
+        decisions=decisions,
+        covers=covers,
+    )
 
 
 _FIELD_LABEL = {

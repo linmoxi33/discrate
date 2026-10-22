@@ -144,6 +144,22 @@ def main(argv: list[str] | None = None) -> int:
     changed = [p for p, digest in before.items() if not p.exists() or sha256(p) != digest]
     check(not changed, "源文件一个字节都没变", f"校验 {len(before)} 个文件")
 
+    print("\n[4b] v0.2：专辑封面归位、报告落盘", flush=True)
+    cover = target / "周杰伦" / "叶惠美" / "cover.jpg"
+    check(cover.exists(), "专辑目录带上了封面", str(cover.relative_to(target)))
+    stray = list((target / "单曲").rglob("cover.*")) if (target / "单曲").exists() else []
+    check(not stray, "单曲目录没被乱塞封面", f"{len(stray)} 张")
+    report_md = target / "整理报告.md"
+    report_json = target / "整理报告.json"
+    check(report_md.exists() and report_json.exists(), "生成了整理报告", report_md.name)
+    if report_md.exists():
+        text = report_md.read_text(encoding="utf-8")
+        check(
+            "## 如何撤回" in text and "discrate undo" in text,
+            "报告里写清了怎么撤回",
+        )
+        check("## 整理后的结构" in text, "报告里有整理后的结构")
+
     print("\n[5] 用户又跑了一次（增量场景）", flush=True)
     snapshot = {p: p.stat().st_size for p in target.rglob("*.mp3")}
     with FakeTTY():
@@ -162,6 +178,8 @@ def main(argv: list[str] | None = None) -> int:
     check(code == 0, "undo 正常退出")
     leftovers = list(target.rglob("*.mp3"))
     check(not leftovers, "副本全部撤回", f"残留 {len(leftovers)} 个")
+    cover_left = list(target.rglob("cover.*"))
+    check(not cover_left, "封面也一并撤回", f"残留 {len(cover_left)} 张")
     still_there = all(p.exists() for p in before)
     check(still_there, "源文件仍在原处")
 

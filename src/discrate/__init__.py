@@ -8,6 +8,6 @@
 * 所有写操作都进 journal，可 ``undo`` 回滚。
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = ["__version__"]

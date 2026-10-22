@@ -142,6 +142,63 @@ MUTATIONS: list[Mutation] = [
         "            and True",
         "输出目录被当成素材二次扫描",
     ),
+    # ---- v0.2 新增：封面 / 报告 / 源校验 / 在线建议 ----
+    Mutation(
+        "no-cover-assignment",
+        "decide.py",
+        "        chosen = pick_cover(scan.images.get(source_dir, []))",
+        "        chosen = None",
+        "封面从不分配",
+    ),
+    Mutation(
+        "no-cover-scope-check",
+        "decide.py",
+        "        if len(dir_to_albums.get(source_dir, ())) != 1:\n            continue",
+        "        if False:\n            continue",
+        "根目录封面被贴到多个不同专辑",
+    ),
+    Mutation(
+        "cover-not-undone",
+        "execute.py",
+        '        if op not in ("copy", "move", "cover"):',
+        '        if op not in ("copy", "move"):',
+        "撤销时不删封面",
+    ),
+    Mutation(
+        "no-source-integrity",
+        "execute.py",
+        "                    if now != decision.track.sha256:",
+        "                    if False:",
+        "源文件被改动后仍按旧计划落盘",
+    ),
+    Mutation(
+        "report-wrong-name",
+        "report.py",
+        '    md_path = target / "整理报告.md"',
+        '    md_path = target / "report.md"',
+        "报告文件名与承诺不一致",
+    ),
+    Mutation(
+        "lookup-ignore-limit",
+        "lookup.py",
+        "        if used >= limit:\n            break",
+        "        if False:\n            break",
+        "在线查询数量上限失效",
+    ),
+    Mutation(
+        "lookup-cache-not-saved",
+        "lookup.py",
+        "    if cache is not None:\n        cache.save()",
+        "    if False:\n        cache.save()",
+        "查询结果不落缓存，每次重复请求",
+    ),
+    Mutation(
+        "tree-no-overflow-hint",
+        "report.py",
+        "        hidden = len(items) - len(shown)",
+        "        hidden = 0",
+        "目录树超出上限却不提示，用户以为只有这几项",
+    ),
 ]
 
 

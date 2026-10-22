@@ -17,10 +17,13 @@ from .naming import normalize_key
 
 __all__ = [
     "AUDIO_SUFFIXES",
+    "COVER_NAMES",
+    "IMAGE_SUFFIXES",
     "IgnoredItem",
     "ScanResult",
     "Track",
     "parse_filename",
+    "pick_cover",
     "scan_folder",
 ]
 
@@ -42,6 +45,11 @@ AUDIO_SUFFIXES = {
     ".dsf",
     ".dff",
 }
+
+#: 常见的封面文件名（小写、无扩展名）
+COVER_NAMES = ("cover", "folder", "front", "albumart", "albumartsmall", "artwork")
+
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
 #: 这些目录名不含歌手/专辑信息，不能拿来推断。
 _GENERIC_DIRS = {
@@ -123,10 +131,36 @@ class ScanResult:
     root: Path
     tracks: list[Track]
     ignored: list[IgnoredItem]
+    #: 源目录 → 该目录下的图片文件（用来找专辑封面）
+    images: dict[Path, list[Path]] = field(default_factory=dict)
 
     @property
     def total_bytes(self) -> int:
         return sum(t.size for t in self.tracks)
+
+
+def pick_cover(images: list[Path]) -> Path | None:
+    """从一堆图片里选一张当封面。
+
+    只认标准名（cover/folder/front…）；非标准名时，只有「目录里仅此一张图」
+    才敢用 —— 一整个目录十几张扫图时随便挑一张，比没有封面更糟。
+    """
+    if not images:
+        return None
+
+    def rank(path: Path) -> int:
+        stem = path.stem.casefold()
+        try:
+            return COVER_NAMES.index(stem)
+        except ValueError:
+            return len(COVER_NAMES)
+
+    named = [p for p in images if p.stem.casefold() in COVER_NAMES]
+    if named:
+        return min(named, key=rank)
+    if len(images) == 1:
+        return images[0]
+    return None
 
 
 def _hash_file(path: Path, chunk: int = 1 << 20) -> str:
@@ -273,6 +307,7 @@ def scan_folder(
     # 第一遍：只收集候选文件，同时统计每个目录里有几个音频。
     # 目录里有几首歌决定了目录名能不能当专辑名（见 parse_folder）。
     candidates: list[Path] = []
+    images: dict[Path, list[Path]] = {}
     for dirpath, dirnames, filenames in os.walk(base, followlinks=False):
         dirnames[:] = sorted(
             d
@@ -284,7 +319,12 @@ def scan_folder(
             path = Path(dirpath) / name
             if name.startswith(".") or name.casefold() in _JUNK_NAMES:
                 continue
-            if path.suffix.lower() not in AUDIO_SUFFIXES:
+            suffix = path.suffix.lower()
+            if suffix in IMAGE_SUFFIXES:
+                # 图片不是待整理的文件，但可能是这张专辑的封面。
+                images.setdefault(path.parent, []).append(path)
+                continue
+            if suffix not in AUDIO_SUFFIXES:
                 ignored.append(IgnoredItem(path, "非音频文件"))
                 continue
             candidates.append(path)
@@ -338,4 +378,4 @@ def scan_folder(
             )
         )
 
-    return ScanResult(root=base, tracks=tracks, ignored=ignored)
+    return ScanResult(root=base, tracks=tracks, ignored=ignored, images=images)

@@ -51,6 +51,29 @@ def make_tone(path: Path, seconds: float, freq: int = 440) -> Path:
     return path
 
 
+def make_cover(path: Path, color: str = "gray") -> Path:
+    """生成一张纯色封面图，用来验证封面归位。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            _ffmpeg(),
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c={color}:s=200x200",
+            "-frames:v",
+            "1",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return path
+
+
 def tag(path: Path, **fields) -> Path:
     mf = mediafile.MediaFile(str(path))
     for key, value in fields.items():
@@ -104,18 +127,22 @@ def build(root: Path) -> list[str]:
     (root / "空文件.mp3").write_bytes(b"")
     notes.append("空文件.mp3 —— 0 字节，应判为无法读取")
     (root / "readme.txt").write_text("下载说明", encoding="utf-8")
-    (root / "cover.jpg").write_bytes(b"\xff\xd8\xff\xe0fake-jpeg")
+    # 根目录混放一张封面：它不属于任何一个专辑，不该被贴到任何专辑上
+    make_cover(root / "cover.jpg", "black")
+    notes.append("根目录 cover.jpg —— 归属不明，不应被分给任何专辑")
     (root / ".DS_Store").write_bytes(b"\x00\x01")
-    notes.append("readme.txt / cover.jpg / .DS_Store —— 非音频，应被忽略")
+    notes.append("readme.txt / .DS_Store —— 非音频，应被忽略")
 
     # --- 靠目录名推断 ---
     album_dir = root / "周杰伦 - 叶惠美"
     make_tone(album_dir / "夜曲.mp3", 1.4, 420)
     make_tone(album_dir / "03 以父之名.mp3", 1.4, 440)
+    make_cover(album_dir / "cover.jpg", "dimgray")
     notes.append("周杰伦 - 叶惠美/ —— 目录名可推出歌手+专辑，文件名可推出轨号+曲名")
 
     bare_album = root / "叶惠美"
     make_tone(bare_album / "东风破.mp3", 1.3, 460)
+    make_cover(bare_album / "folder.jpg", "silver")
     notes.append("叶惠美/东风破.mp3 —— 只有专辑名，歌手应落到「未知歌手」")
 
     # --- 同歌不同码率（体积不同）---

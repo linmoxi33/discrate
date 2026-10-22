@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "discrate"
-version = "0.1.0"
+version = "0.2.0"
 description = "把一堆命名混乱的音乐文件整理成整齐、可回滚的音乐库"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -120,7 +120,8 @@ class TestUndo:
         result = apply_plan(plan)
         targets = [d.target for d in result.done]
         undo = undo_journal(result.journal_path)
-        assert undo.removed == len(targets)
+        # 音频副本 + 封面都要撤回
+        assert undo.removed == len(targets) + result.covers
         assert not any(t.exists() for t in targets)
 
     def test_undo_restores_state(self, sample_dir):
@@ -195,3 +196,47 @@ class TestRoundTrip:
         plan = make_plan(sample_dir)
         apply_plan(plan)
         assert state_path(plan.target_root).exists()
+
+
+class TestSourceIntegrity:
+    def test_changed_source_is_skipped(self, tmp_path, make_track):
+        """方案算完之后源文件被改了，不能按旧计划落盘。"""
+        root = tmp_path / "音乐"
+        root.mkdir()
+        src = make_track("音乐/周杰伦 - 稻香.mp3", freq=340)
+        plan = make_plan(root)
+        src.write_bytes(b"someone replaced this file")
+
+        result = apply_plan(plan)
+        assert not result.ok
+        assert any("被改动过" in error for _d, error in result.failed)
+        assert not (root / "整理结果" / "单曲" / "周杰伦" / "稻香.mp3").exists()
+
+    def test_missing_source_is_skipped(self, tmp_path, make_track):
+        root = tmp_path / "音乐"
+        root.mkdir()
+        src = make_track("音乐/周杰伦 - 稻香.mp3", freq=340)
+        plan = make_plan(root)
+        src.unlink()
+
+        result = apply_plan(plan)
+        assert not result.ok
+        assert any("读不到" in error for _d, error in result.failed)
+
+    def test_unchanged_source_still_works(self, tmp_path, make_track):
+        root = tmp_path / "音乐"
+        root.mkdir()
+        make_track("音乐/周杰伦 - 稻香.mp3", freq=340)
+        plan = make_plan(root)
+        result = apply_plan(plan)
+        assert result.ok
+
+    def test_journal_records_source_changed(self, tmp_path, make_track):
+        root = tmp_path / "音乐"
+        root.mkdir()
+        src = make_track("音乐/周杰伦 - 稻香.mp3", freq=340)
+        plan = make_plan(root)
+        src.write_bytes(b"changed")
+        result = apply_plan(plan)
+        text = result.journal_path.read_text(encoding="utf-8")
+        assert "source-changed" in text

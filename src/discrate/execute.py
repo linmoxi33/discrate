@@ -78,6 +78,7 @@ class ApplyResult:
     journal_path: Path
     done: list[Decision] = field(default_factory=list)
     failed: list[tuple[Decision, str]] = field(default_factory=list)
+    covers: int = 0
 
     @property
     def ok(self) -> bool:
@@ -159,6 +160,22 @@ def apply_plan(
                     _append(handle, {"op": "skip", "src": str(src), "dst": str(dst), "reason": "target-exists"})
                     continue
 
+                # 方案是几分钟前算的，源文件可能已经被改过。内容对不上就
+                # 不能按原计划落盘，否则整理出来的是一份陌生的文件。
+                if decision.track.sha256:
+                    try:
+                        now = _sha256(src)
+                    except OSError as exc:
+                        result.failed.append((decision, f"源文件读不到：{exc}"))
+                        _append(handle, {"op": "skip", "src": str(src), "reason": "source-unreadable"})
+                        continue
+                    if now != decision.track.sha256:
+                        result.failed.append(
+                            (decision, "源文件在生成方案后被改动过，本次跳过（重新运行可以按新内容整理）")
+                        )
+                        _append(handle, {"op": "skip", "src": str(src), "reason": "source-changed"})
+                        continue
+
                 # 先记账再动手，崩溃后仍可回滚
                 _append(
                     handle,
@@ -213,12 +230,37 @@ def apply_plan(
                 if progress is not None:
                     progress(index, len(writes), decision)
 
+        # 封面在音频之后处理：专辑目录这时才存在。
+        for album_dir, cover_src in sorted(plan.covers.items()):
+            dest = album_dir / f"cover{cover_src.suffix.lower()}"
+            if dest.exists():
+                continue
+            try:
+                album_dir.mkdir(parents=True, exist_ok=True)
+                _append(
+                    handle,
+                    {"op": "cover", "src": str(cover_src), "dst": str(dest)},
+                )
+                shutil.copy2(str(cover_src), str(dest))
+                result.covers += 1
+            except OSError as exc:
+                _append(
+                    handle,
+                    {
+                        "op": "error",
+                        "src": str(cover_src),
+                        "dst": str(dest),
+                        "error": f"{type(exc).__name__}: {exc}",
+                    },
+                )
+
         _append(
             handle,
             {
                 "op": "done",
                 "applied": len(result.done),
                 "failed": len(result.failed),
+                "covers": result.covers,
             },
         )
 
@@ -295,7 +337,7 @@ def undo_journal(journal: Path | str) -> UndoResult:
 
     for entry in reversed(entries):
         op = entry.get("op")
-        if op not in ("copy", "move"):
+        if op not in ("copy", "move", "cover"):
             continue
         src = Path(entry["src"])
         dst = Path(entry["dst"])
@@ -304,7 +346,7 @@ def undo_journal(journal: Path | str) -> UndoResult:
         if not dst.exists():
             continue
 
-        if op == "copy":
+        if op in ("copy", "cover"):
             if expected and _sha256(dst) != expected:
                 result.kept.append((dst, "内容已被改动，保留"))
                 continue

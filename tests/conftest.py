@@ -59,6 +59,41 @@ def tones(tmp_path_factory, ffmpeg):
     return get
 
 
+@pytest.fixture(scope="session")
+def jpeg_bytes(tmp_path_factory, ffmpeg) -> bytes:
+    """一张真实可解码的小 JPEG，用来测封面归位。"""
+    target = tmp_path_factory.mktemp("img") / "c.jpg"
+    subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=gray:s=64x64",
+            "-frames:v",
+            "1",
+            str(target),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return target.read_bytes()
+
+
+@pytest.fixture
+def make_cover(tmp_path, jpeg_bytes):
+    def _make(name: str) -> Path:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(jpeg_bytes)
+        return path
+
+    return _make
+
+
 @pytest.fixture
 def make_track(tmp_path, tones):
     """在 tmp_path 里造一个音频文件，可选写入标签。"""
@@ -84,7 +119,7 @@ def make_track(tmp_path, tones):
 
 
 @pytest.fixture
-def sample_dir(tmp_path, make_track):
+def sample_dir(tmp_path, make_track, jpeg_bytes):
     """一个最小但覆盖多分支的「用户文件夹」。"""
     root = tmp_path / "音乐"
     root.mkdir()
@@ -108,4 +143,5 @@ def sample_dir(tmp_path, make_track):
     (root / "readme.txt").write_text("说明", encoding="utf-8")
     make_track("音乐/周杰伦 - 叶惠美/夜曲.mp3", freq=420)
     make_track("音乐/周杰伦 - 叶惠美/03 以父之名.mp3", freq=440)
+    (root / "周杰伦 - 叶惠美" / "cover.jpg").write_bytes(jpeg_bytes)
     return root

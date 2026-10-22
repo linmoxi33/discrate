@@ -10,14 +10,22 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 
 from . import __version__
 from .decide import build_plan
-from .execute import apply_plan, find_latest_journal, load_state, undo_journal
+from .execute import (
+    JOURNAL_DIR,
+    apply_plan,
+    find_latest_journal,
+    load_state,
+    undo_journal,
+)
+from .lookup import LookupCache, MusicBrainzProvider, collect_suggestions
 from .profile import DEFAULT_PROFILE, PROFILES, get_profile
-from .report import render_plan, render_result, to_json
+from .report import render_plan, render_result, to_json, write_report
 from .scan import scan_folder
 
 __all__ = ["main"]
@@ -84,9 +92,24 @@ def _build_parser() -> argparse.ArgumentParser:
         p.add_argument("--max-files", type=int, default=None, help="本次最多处理多少个文件")
         p.add_argument("--no-dedupe", action="store_true", help="不判定重复，全部按文件整理")
         p.add_argument("--no-tag-write", action="store_true", help="只整理文件，不补写标签")
+        p.add_argument(
+            "--lookup",
+            action="store_true",
+            help="联网查询元数据（默认关闭）。结果只作为建议展示，绝不自动写盘",
+        )
+        p.add_argument(
+            "--lookup-limit",
+            type=int,
+            default=20,
+            metavar="N",
+            help="最多为多少个文件发起在线查询（默认 20，受 1 次/秒限速约束）",
+        )
         if allow_exec:
             p.add_argument("-y", "--yes", action="store_true", help="跳过确认，直接执行")
             p.add_argument("--dry-run", action="store_true", help="只出方案，不执行")
+            p.add_argument(
+                "--no-report", action="store_true", help="不在输出目录写整理报告"
+            )
 
     tidy = sub.add_parser("tidy", help="扫描并整理（默认命令）")
     add_common(tidy, allow_exec=True)
@@ -119,12 +142,32 @@ def _prepare_plan(args) -> tuple[object, object]:
     else:
         target = root / "整理结果"
     scan = scan_folder(root, max_files=args.max_files, exclude=[target])
+
+    hints = None
+    if getattr(args, "lookup", False):
+        # 只查「不是全部字段都来自标签」的文件 —— 标签齐全的不需要联网。
+        hints = collect_suggestions(
+            scan.tracks,
+            MusicBrainzProvider(),
+            LookupCache(target / JOURNAL_DIR / "lookup-cache.json"),
+            limit=getattr(args, "lookup_limit", 20),
+            should_lookup=lambda t: (
+                t.error is None
+                and bool(str(t.fields.get("title") or "").strip())
+                and (
+                    t.sources.get("title") != "tag"
+                    or t.sources.get("artist") != "tag"
+                )
+            ),
+        )
+
     plan = build_plan(
         scan,
         profile,
         target_root=target,
         previous=load_state(target),
         dedupe=not getattr(args, "no_dedupe", False),
+        suggestions=hints,
     )
     return scan, plan
 
@@ -139,6 +182,13 @@ def _cmd_plan(args) -> int:
             _say(f"  另有 {len(scan.ignored)} 个非音频文件被忽略。")
             _say("")
     return EXIT_OK
+
+
+def _fmt_span(seconds: float) -> str:
+    total = int(max(0, seconds))
+    if total < 60:
+        return f"{total}秒"
+    return f"{total // 60}分{total % 60:02d}秒"
 
 
 def _cmd_tidy(args) -> int:
@@ -176,22 +226,42 @@ def _cmd_tidy(args) -> int:
 
     total = len(plan.writes)
     show_progress = sys.stdout.isatty()
-    state = {"last": 0}
+    started = time.monotonic()
+    state = {"last": 0, "ts": 0.0}
 
-    def progress(done: int, _total: int, _decision) -> None:
+    def progress(done: int, _total: int, decision) -> None:
         if not show_progress:
             return
-        if done - state["last"] >= max(1, _total // 20) or done == _total:
-            state["last"] = done
-            sys.stdout.write(f"\r  正在整理 {done}/{_total} …")
-            sys.stdout.flush()
+        now = time.monotonic()
+        # 每 2% 或每 0.15 秒刷一次，避免几百首时疯狂重绘。
+        if done != _total and done - state["last"] < max(1, _total // 50):
+            return
+        if done != _total and now - state["ts"] < 0.15:
+            return
+        state["last"] = done
+        state["ts"] = now
+        elapsed = now - started
+        rate = done / elapsed if elapsed > 0 else 0
+        remain = (_total - done) / rate if rate > 0 else 0
+        name = decision.track.path.name
+        line = (
+            f"\r  [{done}/{_total}] {done * 100 // _total}%"
+            f" · 已用 {_fmt_span(elapsed)} · 剩约 {_fmt_span(remain)}"
+            f" · {name[:26]:<26}"
+        )
+        sys.stdout.write(line)
+        sys.stdout.flush()
 
     result = apply_plan(plan, progress=progress, write_meta=not args.no_tag_write)
     if show_progress and total:
-        sys.stdout.write("\r" + " " * 40 + "\r")
+        sys.stdout.write("\r" + " " * 78 + "\r")
         sys.stdout.flush()
 
-    _say(render_result(plan, result))
+    report_md = None
+    if result.done and not args.no_report:
+        report_md, _json_path = write_report(plan, result)
+
+    _say(render_result(plan, result, report_path=report_md))
     return EXIT_OK if result.ok else EXIT_PARTIAL
 
 
